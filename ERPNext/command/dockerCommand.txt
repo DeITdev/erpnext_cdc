@@ -1,0 +1,13 @@
+To run ERPNext v15:
+docker compose -f docker-compose-v15.yml up -d
+
+To run ERPNext Latest:
+docker compose -f docker-compose-latest.yml up -d
+
+To stop the current running stack:
+docker compose -f docker-compose-v15.yml down
+# or
+docker compose -f docker-compose-latest.yml down
+
+To stop and remove volumes:
+docker compose down -v

@@ -1,0 +1,57 @@
+{
+  "name": "blockchain-cdc-consumer",
+  "version": "3.0.0",
+  "description": "Dynamic CDC Consumer with Multi-Database and Blockchain Integration",
+  "main": "consumer-blockchain.js",
+  "scripts": {
+    "start": "node consumer-blockchain.js",
+    "consumer": "node consumer-blockchain.js",
+    "cdc": "node cli/cdc-manager.js",
+    "cdc:list": "node cli/cdc-manager.js list-apps",
+    "cdc:status": "node cli/cdc-manager.js status",
+    "cdc:discover": "node cli/cdc-manager.js discover",
+    "test": "npm run test:adapters",
+    "test:adapters": "node test/test-adapters.js",
+    "test:blockchain": "node test-blockchain-integration.js",
+    "perf": "node performance-monitor.js",
+    "perf:realtime": "node performance-monitor.js --realtime",
+    "perf:export": "node performance-monitor.js --output performance-results.csv"
+  },
+  "dependencies": {
+    "axios": "^1.9.0",
+    "commander": "^11.1.0",
+    "dotenv": "^16.5.0",
+    "fs-extra": "^11.3.0",
+    "js-yaml": "^4.1.1",
+    "kafkajs": "^2.2.4",
+    "mysql2": "^3.14.2",
+    "snappy": "^7.3.3"
+  },
+  "optionalDependencies": {
+    "mongodb": "^6.0.0",
+    "mssql": "^10.0.0",
+    "pg": "^8.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "keywords": [
+    "kafka",
+    "blockchain",
+    "cdc",
+    "debezium",
+    "mysql",
+    "postgres",
+    "mongodb",
+    "sqlserver",
+    "multi-database"
+  ],
+  "author": "Blockchain-ERP Integration Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "bin": {
+    "cdc-manager": "./cli/cdc-manager.js"
+  }
+}

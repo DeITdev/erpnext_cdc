@@ -1,0 +1,1 @@
+this file for filling AI context about custom app in ERPNext

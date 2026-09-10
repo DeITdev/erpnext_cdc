@@ -1,0 +1,17 @@
+Node4
+Node5
+*database
+*caches
+key
+node_modules
+.env
+.env.local
+.DS_Store
+package-lock.json
+auth.txt
+cdc_events_log.json
+.idea
+.log
+.venv
+blockchain_hcm
+iot_hcm

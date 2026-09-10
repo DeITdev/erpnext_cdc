@@ -1,0 +1,19 @@
+# do these command on both frontend and backend container. 
+bench get-app {app_name}
+
+bench --site {site_name} install-app {app_name}
+
+bench migrate
+
+# do these command on both frontend and backend container in one line
+bench get-app {app_name} && bench --site {site_name} install-app {app_name} && bench migrate
+
+# List all installed apps for verify installation
+bench --site {site_name} list-apps
+bench --site frontend list-apps
+
+# uninstall app
+bench --site {site_name} uninstall-app {app_name}
+
+# remove from apps folder
+bench remove-app {app_name}
