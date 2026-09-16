@@ -1,14 +1,14 @@
-# ERPNext Latest Version Docker Compose Configuration
-# Run with: docker compose -f docker-compose-latest.yml up -d
+# ERPNext quick-evaluation Docker Compose configuration.
+# Start: docker compose -f ERPNext/docker-compose.yml up -d
+# Follow site creation: docker compose -f ERPNext/docker-compose.yml logs -f create-site
 
-name: erpnext-latest
+name: erpnext
 
 services:
-  backend-latest:
-    image: frappe/erpnext:latest
-    container_name: backend-latest
+  backend:
+    image: frappe/erpnext:v16.19.1
     networks:
-      - frappe_network_latest
+      - frappe_network
     deploy:
       restart_policy:
         condition: on-failure
@@ -19,19 +19,18 @@ services:
       retries: 10
       start_period: 10s
     volumes:
-      - sites-latest:/home/frappe/frappe-bench/sites
-      - logs-latest:/home/frappe/frappe-bench/logs
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
     environment:
-      DB_HOST: db-latest
+      DB_HOST: db
       DB_PORT: "3306"
       MYSQL_ROOT_PASSWORD: admin
       MARIADB_ROOT_PASSWORD: admin
 
-  configurator-latest:
-    image: frappe/erpnext:latest
-    container_name: configurator-latest
+  configurator:
+    image: frappe/erpnext:v16.19.1
     networks:
-      - frappe_network_latest
+      - frappe_network
     deploy:
       restart_policy:
         condition: none
@@ -48,34 +47,33 @@ services:
         bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
         bench set-config -gp socketio_port $$SOCKETIO_PORT;
     environment:
-      DB_HOST: db-latest
+      DB_HOST: db
       DB_PORT: "3306"
-      REDIS_CACHE: redis-cache-latest:6379
-      REDIS_QUEUE: redis-queue-latest:6379
+      REDIS_CACHE: redis-cache:6379
+      REDIS_QUEUE: redis-queue:6379
       SOCKETIO_PORT: "9000"
     volumes:
-      - sites-latest:/home/frappe/frappe-bench/sites
-      - logs-latest:/home/frappe/frappe-bench/logs
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
 
-  create-site-latest:
-    image: frappe/erpnext:latest
-    container_name: create-site-latest
+  create-site:
+    image: frappe/erpnext:v16.19.1
     networks:
-      - frappe_network_latest
+      - frappe_network
     deploy:
       restart_policy:
         condition: none
     volumes:
-      - sites-latest:/home/frappe/frappe-bench/sites
-      - logs-latest:/home/frappe/frappe-bench/logs
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
     entrypoint:
       - bash
       - -c
     command:
       - >
-        wait-for-it -t 120 db-latest:3306;
-        wait-for-it -t 120 redis-cache-latest:6379;
-        wait-for-it -t 120 redis-queue-latest:6379;
+        wait-for-it -t 120 db:3306;
+        wait-for-it -t 120 redis-cache:6379;
+        wait-for-it -t 120 redis-queue:6379;
         export start=`date +%s`;
         until [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".db_host // empty"` ]] && \
           [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".redis_cache // empty"` ]] && \
@@ -91,17 +89,16 @@ services:
         echo "sites/common_site_config.json found";
         bench new-site --mariadb-user-host-login-scope='%' --admin-password=admin --db-root-username=root --db-root-password=admin --install-app erpnext --set-default frontend;
 
-  db-latest:
-    image: mariadb:10.6
-    container_name: db-latest
+  db:
+    image: mariadb:11.8
     networks:
-      - frappe_network_latest
-    ports:
-      - "3306:3306"
+      - frappe_network
     healthcheck:
-      test: mysqladmin ping -h localhost --password=admin
-      interval: 1s
-      retries: 20
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 5s
+      interval: 5s
+      timeout: 5s
+      retries: 5
     deploy:
       restart_policy:
         condition: on-failure
@@ -118,17 +115,16 @@ services:
       MYSQL_ROOT_PASSWORD: admin
       MARIADB_ROOT_PASSWORD: admin
     volumes:
-      - db-data-latest:/var/lib/mysql
+      - db-data:/var/lib/mysql
 
-  frontend-latest:
-    image: frappe/erpnext:latest
-    container_name: frontend-latest
+  frontend:
+    image: frappe/erpnext:v16.19.1
     networks:
-      - frappe_network_latest
+      - frappe_network
     depends_on:
-      backend-latest:
+      backend:
         condition: service_healthy
-      websocket-latest:
+      websocket:
         condition: service_started
     deploy:
       restart_policy:
@@ -136,25 +132,24 @@ services:
     command:
       - nginx-entrypoint.sh
     environment:
-      BACKEND: backend-latest:8000
+      BACKEND: backend:8000
       FRAPPE_SITE_NAME_HEADER: frontend
-      SOCKETIO: websocket-latest:9000
+      SOCKETIO: websocket:9000
       UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
       UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
       UPSTREAM_REAL_IP_RECURSIVE: "off"
       PROXY_READ_TIMEOUT: 120
       CLIENT_MAX_BODY_SIZE: 50m
     volumes:
-      - sites-latest:/home/frappe/frappe-bench/sites
-      - logs-latest:/home/frappe/frappe-bench/logs
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
     ports:
       - "8080:8080"
 
-  queue-long-latest:
-    image: frappe/erpnext:latest
-    container_name: queue-long-latest
+  queue-long:
+    image: frappe/erpnext:v16.19.1
     networks:
-      - frappe_network_latest
+      - frappe_network
     deploy:
       restart_policy:
         condition: on-failure
@@ -164,14 +159,13 @@ services:
       - --queue
       - long,default,short
     volumes:
-      - sites-latest:/home/frappe/frappe-bench/sites
-      - logs-latest:/home/frappe/frappe-bench/logs
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
 
-  queue-short-latest:
-    image: frappe/erpnext:latest
-    container_name: queue-short-latest
+  queue-short:
+    image: frappe/erpnext:v16.19.1
     networks:
-      - frappe_network_latest
+      - frappe_network
     deploy:
       restart_policy:
         condition: on-failure
@@ -181,36 +175,33 @@ services:
       - --queue
       - short,default
     volumes:
-      - sites-latest:/home/frappe/frappe-bench/sites
-      - logs-latest:/home/frappe/frappe-bench/logs
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
 
-  redis-queue-latest:
+  redis-queue:
     image: redis:6.2-alpine
-    container_name: redis-queue-latest
     networks:
-      - frappe_network_latest
+      - frappe_network
     deploy:
       restart_policy:
         condition: on-failure
     volumes:
-      - redis-queue-data-latest:/data
+      - redis-queue-data:/data
 
-  redis-cache-latest:
+  redis-cache:
     image: redis:6.2-alpine
-    container_name: redis-cache-latest
     networks:
-      - frappe_network_latest
+      - frappe_network
     deploy:
       restart_policy:
         condition: on-failure
     volumes:
-      - redis-cache-data-latest:/data
+      - redis-cache-data:/data
 
-  scheduler-latest:
-    image: frappe/erpnext:latest
-    container_name: scheduler-latest
+  scheduler:
+    image: frappe/erpnext:v16.19.1
     networks:
-      - frappe_network_latest
+      - frappe_network
     deploy:
       restart_policy:
         condition: on-failure
@@ -218,14 +209,13 @@ services:
       - bench
       - schedule
     volumes:
-      - sites-latest:/home/frappe/frappe-bench/sites
-      - logs-latest:/home/frappe/frappe-bench/logs
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
 
-  websocket-latest:
-    image: frappe/erpnext:latest
-    container_name: websocket-latest
+  websocket:
+    image: frappe/erpnext:v16.19.1
     networks:
-      - frappe_network_latest
+      - frappe_network
     deploy:
       restart_policy:
         condition: on-failure
@@ -233,16 +223,16 @@ services:
       - node
       - /home/frappe/frappe-bench/apps/frappe/socketio.js
     volumes:
-      - sites-latest:/home/frappe/frappe-bench/sites
-      - logs-latest:/home/frappe/frappe-bench/logs
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
 
 volumes:
-  db-data-latest:
-  redis-queue-data-latest:
-  redis-cache-data-latest:
-  sites-latest:
-  logs-latest:
+  db-data:
+  redis-queue-data:
+  redis-cache-data:
+  sites:
+  logs:
 
 networks:
-  frappe_network_latest:
+  frappe_network:
     driver: bridge
