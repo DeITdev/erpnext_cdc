@@ -16,7 +16,8 @@ Make the checked-in ERPNext, Debezium/Kafka, and Node.js consumer setup reproduc
 
 ### ERPNext Stack
 
-- `ERPNext/docker-compose.yml` defines ERPNext `v16.19.1`, MariaDB `11.8`, Redis cache/queue, backend, frontend, WebSocket, scheduler, workers, configurator, and site creation.
+- `ERPNext/Containerfile` defines one application image with ERPNext `v16.19.1` and release-aligned HRMS `v16.7.1`; all Frappe application services in Compose reference that image.
+- `ERPNext/docker-compose.yml` defines the custom ERPNext/HRMS image build, MariaDB `11.8`, Redis cache/queue, backend, frontend, WebSocket, scheduler, workers, configurator, and site creation.
 - MariaDB is configured for row-based binary logging with full row images.
 - Named volumes are defined for database data, Redis data, ERPNext sites, and logs.
 - ERPNext is exposed locally on port `8080`.
@@ -38,17 +39,29 @@ Make the checked-in ERPNext, Debezium/Kafka, and Node.js consumer setup reproduc
 ### Documentation and Static Checks
 
 - Replaced all four context files with repository-specific product, architecture, workflow, and progress documentation on 2026-09-16.
+- Converted all six `ERPNext/command/*.txt` notes into Markdown runbooks and removed the superseded text files.
 - Consulted current Debezium documentation through Context7 to confirm the general snapshot-to-binlog flow and `ExtractNewRecordState` role; local version-specific behavior still requires runtime verification against Debezium `2.4`.
 - `docker compose -f ERPNext/docker-compose.yml config --quiet` passes.
 - `docker compose -f kafka-debezium/docker-compose.yml config --quiet` passes.
 - `node --check` passes for `server.js`, `performance-monitor.js`, and every checked-in JavaScript utility.
+- `docker compose -f ERPNext/docker-compose.yml config --quiet` passes with every Frappe service resolving to `erpnext-cdc-hrms:v16.19.1-hrms-v16.7.1`.
 
-These are static checks only. No container startup, live connector, Kafka event, blockchain request, or destination read was executed during the documentation update.
+The original documentation checks above were static only. The HRMS recovery checks below exercised the live ERPNext stack, but no live connector, Kafka event, blockchain request, or destination read was executed.
+
+### Live HRMS Recovery
+
+- Built the custom application image successfully; it reports Frappe `16.18.3`, ERPNext `16.19.1`, and HRMS `16.7.1` at commit `fe9ad9d`.
+- Backed up the `frontend` site database and public/private files before repairing the interrupted installation.
+- Confirmed the partially installed HRMS tables had no Employee, Attendance, payroll, leave, recruitment, expense, check-in, or shift records before removing the incompatible schema.
+- Uninstalled the partial HRMS `develop` schema, installed HRMS `16.7.1`, and completed `bench --site frontend migrate` successfully.
+- Rebuilt the complete Frappe/ERPNext/HRMS asset manifest and copied the generated files into the image-layer asset directory used by the container entrypoint, so the persistent sites volume no longer hides HRMS assets.
+- Cleared the site and website caches, then verified the site lists HRMS `16.7.1`, Frappe's authenticated app list includes Frappe HR, all nine public HRMS workspaces, ten visible HRMS desktop icons, and nine HRMS sidebars are present.
+- Reproduced the user-facing navigation defect as `danarikram@gmail.com`: despite having both `HR` and `Payroll` module access, Frappe's boot navigation returned only Payroll because newer sidebar records left by the incompatible `develop` installation used workspace titles as module names. Took a fresh database/files backup, re-imported the nine standard sidebar documents from pinned HRMS `16.7.1`, and cleared both caches. The same boot-navigation call now returns all nine HRMS sidebars for that user.
+- Verified all application services use the custom image, the backend is healthy, no recent application errors were logged, and `/hrms`, the Frappe HR logo, and an HR workspace icon all return HTTP `200`.
 
 ## In Progress
 
-- Aligning the repository's documentation and source-of-truth boundaries before attempting a live end-to-end run.
-- Identifying configuration and delivery-semantics gaps that must be resolved by small, testable implementation units.
+- Identifying the remaining CDC configuration and delivery-semantics gaps that must be resolved by small, testable implementation units.
 
 ## Next Up
 
@@ -70,6 +83,7 @@ These are static checks only. No container startup, live connector, Kafka event,
 - Package scripts reference `cli/cdc-manager.js`, `test/test-adapters.js`, and a root-level `test-blockchain-integration.js`; those paths are absent or differ from the checked-in `utils/test-blockchain-integration.js`.
 - There is no checked-in lockfile or redacted environment example. The lockfile is currently ignored.
 - The working tree already contains unrelated user changes, including replacement of an older ERPNext Compose file; those changes were not modified by this documentation work.
+- The previous runtime installation cloned HRMS `develop` into only the frontend container. That branch required Frappe/ERPNext v17, failed on the `N_` import, and left the shared app list inconsistent with backend/worker images. The release-pinned common image, clean HRMS reinstall, and image-layer asset build now replace that runtime installation path.
 
 ### Connectivity and Configuration
 
@@ -110,6 +124,12 @@ These are static checks only. No container startup, live connector, Kafka event,
 - **AD-08 — Context7 before dependency decisions**: Library, framework, API, CLI, Docker image, and service decisions use current documentation through the resolve-then-query workflow before implementation.
 
 ## Session Notes
+
+- **2026-09-16 — HRMS workspace visibility repaired**: Reproduced the reported Payroll-only view using Frappe's boot-navigation path as the active system user. The prior `develop` installation had left all nine `Workspace Sidebar.module` values stamped with workspace titles and with timestamps newer than the pinned release files, so ordinary migration retained them; only `Payroll` matched a real allowed module. Created the `20260916_113605` site/files backup, force-imported the standard HRMS `v16.7.1` workspace sidebar documents, cleared caches, and verified the same user now receives Expenses, HR Setup, Leaves, Payroll, Performance, Recruitment, Shift & Attendance, Tax & Benefits, and Tenure.
+
+- **2026-09-16 — HRMS navigation/icon repair completed**: Confirmed all nine public HRMS workspaces, all ten visible HRMS desktop icons, all nine HRMS sidebars, and the Frappe HR app-screen hook exist. Fixed the missing runtime assets by generating the complete manifest and copying the assets into the image-layer directory used by the container entrypoint. Rebuilt and redeployed every Frappe service, migrated and cleared caches, then verified the authenticated app list includes Frappe HR and `/hrms`, the HRMS logo, and an HR workspace icon return HTTP `200`. Converted all six `ERPNext/command/*.txt` notes into Markdown runbooks and removed the old text files.
+
+- **2026-09-16 — HRMS image fix completed**: Confirmed the live stack ran ERPNext `16.19.1`, Frappe `16.18.3`, and HRMS `develop`, while backend lacked the HRMS module and scheduler restarted. Built and deployed a common custom image pinned to HRMS `v16.7.1`, the version-16 release published alongside ERPNext `v16.19.1`. After taking a site/files backup and confirming the main HR tables were empty, removed the partial develop schema, installed HRMS `16.7.1`, migrated successfully, and verified application versions, module definitions, container/worker health, and HTTP `200`.
 
 - **2026-09-16 — Context replacement**: Inspected the four stale context documents, both Compose files, the consumer, performance monitor, connector generator/configuration, utilities, package manifest, Git state, and recent history. Rewrote the context set for the ERPNext CDC project.
 - **2026-09-16 — Verification**: Both Compose configurations parsed successfully, and every checked-in consumer JavaScript file passed `node --check`. No live services or external APIs were invoked.

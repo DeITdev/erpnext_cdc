@@ -1,0 +1,18 @@
+FROM frappe/erpnext:v16.19.1
+
+ARG HRMS_REF=v16.7.1
+
+USER frappe
+WORKDIR /home/frappe/frappe-bench
+
+# Keep HRMS in the image so every web, worker, and scheduler container runs
+# the same application code. The tag is aligned with the ERPNext v16.19.1
+# release train and avoids the incompatible HRMS develop branch.
+RUN bench set-config -gp socketio_port 9000
+RUN bench get-app --branch "${HRMS_REF}" https://github.com/frappe/hrms.git
+
+# Rebuild the complete manifest after adding HRMS, then move the generated
+# assets into the image-layer directory used by Frappe Docker's entrypoint.
+# Anything left under sites/assets is hidden by the persistent sites volume.
+RUN bench build
+RUN cp -a sites/assets/. assets/

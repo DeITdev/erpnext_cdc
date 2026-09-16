@@ -1,12 +1,19 @@
 # ERPNext quick-evaluation Docker Compose configuration.
-# Start: docker compose -f ERPNext/docker-compose.yml up -d
+# Start: docker compose -f ERPNext/docker-compose.yml up -d --build
 # Follow site creation: docker compose -f ERPNext/docker-compose.yml logs -f create-site
 
 name: erpnext
 
+x-erpnext-image: &erpnext_image erpnext-cdc-hrms:v16.19.1-hrms-v16.7.1
+
 services:
   backend:
-    image: frappe/erpnext:v16.19.1
+    image: *erpnext_image
+    build:
+      context: .
+      dockerfile: Containerfile
+      args:
+        HRMS_REF: v16.7.1
     networks:
       - frappe_network
     deploy:
@@ -28,7 +35,7 @@ services:
       MARIADB_ROOT_PASSWORD: admin
 
   configurator:
-    image: frappe/erpnext:v16.19.1
+    image: *erpnext_image
     networks:
       - frappe_network
     deploy:
@@ -57,7 +64,7 @@ services:
       - logs:/home/frappe/frappe-bench/logs
 
   create-site:
-    image: frappe/erpnext:v16.19.1
+    image: *erpnext_image
     networks:
       - frappe_network
     deploy:
@@ -118,7 +125,7 @@ services:
       - db-data:/var/lib/mysql
 
   frontend:
-    image: frappe/erpnext:v16.19.1
+    image: *erpnext_image
     networks:
       - frappe_network
     depends_on:
@@ -147,7 +154,7 @@ services:
       - "8080:8080"
 
   queue-long:
-    image: frappe/erpnext:v16.19.1
+    image: *erpnext_image
     networks:
       - frappe_network
     deploy:
@@ -163,7 +170,7 @@ services:
       - logs:/home/frappe/frappe-bench/logs
 
   queue-short:
-    image: frappe/erpnext:v16.19.1
+    image: *erpnext_image
     networks:
       - frappe_network
     deploy:
@@ -199,7 +206,7 @@ services:
       - redis-cache-data:/data
 
   scheduler:
-    image: frappe/erpnext:v16.19.1
+    image: *erpnext_image
     networks:
       - frappe_network
     deploy:
@@ -213,7 +220,7 @@ services:
       - logs:/home/frappe/frappe-bench/logs
 
   websocket:
-    image: frappe/erpnext:v16.19.1
+    image: *erpnext_image
     networks:
       - frappe_network
     deploy:

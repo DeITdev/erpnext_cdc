@@ -26,7 +26,7 @@ ERPNext and MariaDB remain the operational system of record. Kafka carries chang
 
 | Layer | Checked-in technology | Responsibility |
 | --- | --- | --- |
-| ERP application | `frappe/erpnext:v16.19.1` | ERPNext UI, application server, scheduler, workers, and WebSocket service |
+| ERP application | Local `erpnext-cdc-hrms:v16.19.1-hrms-v16.7.1`, based on `frappe/erpnext:v16.19.1` | ERPNext and HRMS UI, application server, scheduler, workers, and WebSocket service |
 | Transactional database | `mariadb:11.8` | ERPNext persistence and row-based binary log source |
 | ERP support services | `redis:6.2-alpine` | Frappe cache and job queues |
 | CDC engine | `debezium/connect:2.4` | MariaDB/MySQL snapshot and binlog capture through Kafka Connect |
@@ -38,7 +38,8 @@ ERPNext and MariaDB remain the operational system of record. Kafka carries chang
 
 ## Repository Boundaries
 
-- `ERPNext/docker-compose.yml` defines the ERPNext/Frappe, MariaDB, and Redis stack.
+- `ERPNext/Containerfile` builds the release-pinned ERPNext/HRMS application image used by every Frappe service.
+- `ERPNext/docker-compose.yml` defines the ERPNext/Frappe/HRMS, MariaDB, and Redis stack.
 - `kafka-debezium/docker-compose.yml` defines ZooKeeper, Kafka, Kafka Connect/Debezium, and Kafka UI.
 - `consumer-erp/server.js` is the implemented blockchain CDC consumer entrypoint.
 - `consumer-erp/performance-monitor.js` is a separate consumer that measures pipeline latency while also calling the blockchain API.
@@ -52,6 +53,7 @@ The blockchain API and blockchain network are external boundaries. Documentation
 The repository currently defines two independent Compose projects:
 
 - The ERPNext stack uses an internal `frappe_network` bridge.
+- Every Frappe application service uses the same locally built image, `erpnext-cdc-hrms:v16.19.1-hrms-v16.7.1`. The image derives from `frappe/erpnext:v16.19.1` (ERPNext `16.19.1`, Frappe `16.18.3`) and installs HRMS from the immutable `v16.7.1` tag. Runtime `bench get-app` is not part of the deployment path.
 - The CDC stack uses the named `kafka_net` bridge.
 - Kafka exposes host port `29092`, Kafka Connect exposes `8083`, Kafka UI exposes `8085`, and ERPNext exposes `8080`.
 - MariaDB listens on port `3306` inside `frappe_network`, but the current ERPNext Compose file does not publish that port to the host and does not attach MariaDB to `kafka_net`.
@@ -174,6 +176,7 @@ The consumer and utilities load `consumer-erp/.env.local` in most paths. No exam
 ## State and Persistence
 
 - MariaDB, ERPNext sites/logs, and Redis use Docker named volumes.
+- ERPNext, Frappe, HRMS, Python dependencies, and built assets reside in the common immutable application image. `ERPNext/Containerfile` rebuilds the complete asset manifest after installing HRMS and copies it to `/home/frappe/frappe-bench/assets`, which the container entrypoint links into the persistent `sites` volume. The volume contains site configuration and generated site state, not the application source checkout.
 - Kafka and ZooKeeper have no declared volumes in the current CDC Compose file; broker and connector state should be treated as disposable across container recreation.
 - Kafka Connect stores connector configurations, offsets, and statuses in Kafka internal topics with replication factor effectively limited to the single development broker.
 - Consumer deduplication, batching, and counters exist only in memory.
