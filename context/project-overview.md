@@ -51,7 +51,7 @@ The CDC pipeline separates those concerns:
 
 ### CDC Infrastructure
 
-- A single-node Kafka development broker backed by ZooKeeper.
+- A persistent single-node Kafka development broker using KRaft metadata mode.
 - Debezium Kafka Connect with the MySQL connector available.
 - Kafka UI for local inspection of brokers, topics, and connector status.
 - A connector utility that discovers the generated ERPNext database name, validates requested tables, generates connector configuration, and deploys the connector through Kafka Connect.

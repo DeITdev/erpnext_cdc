@@ -29,10 +29,9 @@ ERPNext and MariaDB remain the operational system of record. Kafka carries chang
 | ERP application | Local `erpnext-cdc-hrms:v16.19.1-hrms-v16.7.1`, based on `frappe/erpnext:v16.19.1` | ERPNext and HRMS UI, application server, scheduler, workers, and WebSocket service |
 | Transactional database | `mariadb:11.8` | ERPNext persistence and row-based binary log source |
 | ERP support services | `redis:6.2-alpine` | Frappe cache and job queues |
-| CDC engine | `debezium/connect:2.4` | MariaDB/MySQL snapshot and binlog capture through Kafka Connect |
-| Event broker | `confluentinc/cp-kafka:7.3.0` | CDC event and connector state transport |
-| Kafka metadata | `confluentinc/cp-zookeeper:7.3.0` | Coordination for the checked-in Kafka development broker |
-| Inspection UI | `provectuslabs/kafka-ui:latest` | Local Kafka and Kafka Connect inspection; the floating tag is unsuitable for reproducible production deployment |
+| CDC engine | `quay.io/debezium/connect:3.6.2.Final` | MariaDB snapshot and binlog capture through Kafka Connect |
+| Event broker | `apache/kafka:4.3.1` | Single-node KRaft broker for CDC events and connector state |
+| Inspection UI | `ghcr.io/kafbat/kafka-ui:v1.5.0` | Local Kafka topic, consumer, and Kafka Connect inspection |
 | Consumer | Node.js 16+ with KafkaJS and Axios | Topic discovery, filtering, transformation, deduplication, and blockchain API delivery |
 | Destination | External HTTP blockchain API | Blockchain writes and record reads; implementation is outside this repository |
 
@@ -40,11 +39,12 @@ ERPNext and MariaDB remain the operational system of record. Kafka carries chang
 
 - `ERPNext/Containerfile` builds the release-pinned ERPNext/HRMS application image used by every Frappe service.
 - `ERPNext/docker-compose.yml` defines the ERPNext/Frappe/HRMS, MariaDB, and Redis stack.
-- `kafka-debezium/docker-compose.yml` defines ZooKeeper, Kafka, Kafka Connect/Debezium, and Kafka UI.
+- `kafka-debezium/docker-compose.yml` defines a KRaft Kafka broker, Kafka Connect/Debezium, and Kafbat UI.
 - `consumer-erp/server.js` is the implemented blockchain CDC consumer entrypoint.
 - `consumer-erp/performance-monitor.js` is a separate consumer that measures pipeline latency while also calling the blockchain API.
 - `consumer-erp/utils/` contains discovery, connector deployment, connectivity, topic, event, and blockchain API utilities.
-- `consumer-erp/utils/config/erpnext-connector.json` is generated or overwritten by the connector deployment utility and contains environment-specific database details.
+- `kafka-debezium/scripts/bootstrap-cdc.sh` discovers the ERPNext database, provisions the CDC user, and creates or updates the connector without writing credentials to tracked files.
+- `consumer-erp/utils/config/erpnext-connector.example.json` documents the credential-free connector shape.
 
 The blockchain API and blockchain network are external boundaries. Documentation may describe the HTTP behavior expected by this repository, but it must not imply that their implementation is present here.
 
@@ -54,12 +54,10 @@ The repository currently defines two independent Compose projects:
 
 - The ERPNext stack uses an internal `frappe_network` bridge.
 - Every Frappe application service uses the same locally built image, `erpnext-cdc-hrms:v16.19.1-hrms-v16.7.1`. The image derives from `frappe/erpnext:v16.19.1` (ERPNext `16.19.1`, Frappe `16.18.3`) and installs HRMS from the immutable `v16.7.1` tag. Runtime `bench get-app` is not part of the deployment path.
-- The CDC stack uses the named `kafka_net` bridge.
+- The CDC stack uses the named `kafka_net` bridge. Kafka Connect also joins the existing external `erpnext_frappe_network` bridge.
 - Kafka exposes host port `29092`, Kafka Connect exposes `8083`, Kafka UI exposes `8085`, and ERPNext exposes `8080`.
-- MariaDB listens on port `3306` inside `frappe_network`, but the current ERPNext Compose file does not publish that port to the host and does not attach MariaDB to `kafka_net`.
-- The generated Debezium connector converts a local database host to `host.docker.internal` and attempts port `3306` from the Kafka Connect container.
-
-Consequently, the checked-in Compose files do not by themselves establish a self-contained MariaDB-to-Debezium network path. Before claiming end-to-end operation, choose and document one explicit topology: publish MariaDB to a host port for local-only access, or connect the relevant containers through a shared Docker network and use the database service name. Do not silently depend on an unrelated host database.
+- MariaDB remains private to Docker. Kafka Connect reaches it as `db:3306` through the shared ERPNext network; the database port is not published to the host.
+- The ERPNext stack must create `erpnext_frappe_network` before the CDC stack starts because Compose treats it as an external network.
 
 ## CDC Configuration and Data Flow
 
@@ -77,15 +75,15 @@ These settings make full row changes available to a compatible binlog reader. Ne
 
 ### Debezium Connector
 
-`utils/add-erp-connector.js` performs the current connector workflow:
+`kafka-debezium/scripts/bootstrap-cdc.sh` performs the connector workflow:
 
-1. Connect to MariaDB and find the first database whose name matches an underscore followed by hexadecimal characters.
-2. List ERPNext `tab*` tables and retain only configured target tables that exist.
-3. Generate a timestamp-derived Debezium server ID.
-4. Save the complete connector document to `utils/config/erpnext-connector.json`.
-5. Delete any existing `erpnext-cdc-connector`, create the replacement through Kafka Connect, and inspect connector/task status.
+1. Use the running ERPNext database container to discover the database whose name matches an underscore followed by hexadecimal characters.
+2. Validate every configured target table and create or rotate a dedicated `debezium` account with snapshot and replication privileges.
+3. Verify that Kafka Connect exposes `io.debezium.connector.mariadb.MariaDbConnector`.
+4. Build the connector configuration in a temporary file and update it through the Kafka Connect REST API.
+5. Poll until the connector and its task are both `RUNNING`, returning the task trace on failure.
 
-The connector limits capture to the discovered database and selected tables. It uses `snapshot.mode=when_needed`, `snapshot.locking.mode=none`, JSON converters without schemas, and the `ExtractNewRecordState` transform. Delete handling is configured as a rewritten record with a `__deleted` marker while tombstones are retained.
+The connector limits capture to the discovered database and selected tables. It uses a stable server ID, `snapshot.mode=when_needed`, current snapshot locking defaults, JSON converters without schemas, and the `ExtractNewRecordState` transform. `delete.tombstone.handling.mode=rewrite-with-tombstone` emits a row containing `__deleted: true` followed by a null tombstone.
 
 The topic convention is:
 
@@ -177,14 +175,14 @@ The consumer and utilities load `consumer-erp/.env.local` in most paths. No exam
 
 - MariaDB, ERPNext sites/logs, and Redis use Docker named volumes.
 - ERPNext, Frappe, HRMS, Python dependencies, and built assets reside in the common immutable application image. `ERPNext/Containerfile` rebuilds the complete asset manifest after installing HRMS and copies it to `/home/frappe/frappe-bench/assets`, which the container entrypoint links into the persistent `sites` volume. The volume contains site configuration and generated site state, not the application source checkout.
-- Kafka and ZooKeeper have no declared volumes in the current CDC Compose file; broker and connector state should be treated as disposable across container recreation.
+- Kafka data uses the `kafka-data` named volume. This persists topics, connector configurations, schema history, source offsets, and consumer offsets across ordinary container recreation.
 - Kafka Connect stores connector configurations, offsets, and statuses in Kafka internal topics with replication factor effectively limited to the single development broker.
 - Consumer deduplication, batching, and counters exist only in memory.
 - Optional performance CSV output is a local generated artifact, not an operational metrics store.
 
 ## Security and Trust Boundaries
 
-- Compose passwords and the checked-in connector JSON are development configuration. Production credentials must be injected through an approved secret mechanism and use a least-privileged CDC database user.
+- The connector bootstrap generates a temporary CDC password unless an ignored `kafka-debezium/.env` supplies one; credentials are never written to a tracked connector file. Production credentials still require an approved secret mechanism.
 - `PRIVATE_KEY` and database passwords must never be committed, printed, placed in topic values, or included in diagnostic artifacts.
 - Kafka, Kafka Connect, MariaDB, ERPNext, and the blockchain API currently have no documented TLS or service authentication in this repository. Keep development ports bound to trusted interfaces and do not expose this topology publicly.
 - CDC event values can contain personal and HR data. Topic ACLs, retention, log redaction, erasure/retention policy, and access auditing must be designed before using real personnel data.

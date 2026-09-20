@@ -24,10 +24,13 @@ Make the checked-in ERPNext, Debezium/Kafka, and Node.js consumer setup reproduc
 
 ### CDC Stack
 
-- `kafka-debezium/docker-compose.yml` defines ZooKeeper, a single Kafka broker, Debezium Kafka Connect, and Kafka UI.
+- `kafka-debezium/docker-compose.yml` now defines a persistent single-node Apache Kafka `4.3.1` KRaft broker, Debezium Kafka Connect `3.6.2.Final`, and Kafbat UI `v1.5.0`.
 - Kafka is exposed to host clients on `29092`; Kafka Connect uses `8083`; Kafka UI uses `8085`.
-- The Debezium connector utility discovers the generated ERPNext database name, filters configured tables, writes connector JSON, deploys the connector, and checks status.
-- The default connector captures `tabEmployee` and `tabAttendance`, unwraps row values, rewrites deletes, and uses snapshots when needed.
+- Kafka Connect joins the external `erpnext_frappe_network` and reaches MariaDB privately at `db:3306`.
+- The bootstrap utility discovers the ERPNext database, validates target tables, provisions a dedicated replication account, deploys an in-memory connector configuration, and checks status without committing credentials.
+- The default MariaDB connector captures `tabEmployee` and `tabAttendance`, unwraps row values, emits rewritten deletes plus tombstones, and snapshots when needed.
+- The Compose model, bootstrap shell syntax, JavaScript wrapper, connector example JSON, and whitespace checks pass locally.
+- The first live bootstrap exposed a short Kafka Connect REST registration race: the connector was created and reached `RUNNING`, but the first status request returned `404`. The status poll now treats the response as a transient unknown state and continues polling.
 
 ### Consumer and Utilities
 
@@ -40,13 +43,22 @@ Make the checked-in ERPNext, Debezium/Kafka, and Node.js consumer setup reproduc
 
 - Replaced all four context files with repository-specific product, architecture, workflow, and progress documentation on 2026-09-16.
 - Converted all six `ERPNext/command/*.txt` notes into Markdown runbooks and removed the superseded text files.
-- Consulted current Debezium documentation through Context7 to confirm the general snapshot-to-binlog flow and `ExtractNewRecordState` role; local version-specific behavior still requires runtime verification against Debezium `2.4`.
+- Consulted current Debezium documentation through Context7 for the MariaDB connector, snapshot/binlog flow, required grants, and current `ExtractNewRecordState` delete handling; the resulting Debezium `3.6.2.Final` configuration has now been verified live.
 - `docker compose -f ERPNext/docker-compose.yml config --quiet` passes.
 - `docker compose -f kafka-debezium/docker-compose.yml config --quiet` passes.
 - `node --check` passes for `server.js`, `performance-monitor.js`, and every checked-in JavaScript utility.
 - `docker compose -f ERPNext/docker-compose.yml config --quiet` passes with every Frappe service resolving to `erpnext-cdc-hrms:v16.19.1-hrms-v16.7.1`.
 
-The original documentation checks above were static only. The HRMS recovery checks below exercised the live ERPNext stack, but no live connector, Kafka event, blockchain request, or destination read was executed.
+The original documentation checks above were static only. Live CDC verification is recorded below; the external blockchain request and destination read remain untested.
+
+### Live ERPNext CDC Verification
+
+- Pulled and started `apache/kafka:4.3.1`, `quay.io/debezium/connect:3.6.2.Final`, and `ghcr.io/kafbat/kafka-ui:v1.5.0`; all three services are healthy.
+- Confirmed Kafka Connect exposes `io.debezium.connector.mariadb.MariaDbConnector`, reaches MariaDB privately at `db:3306`, and runs both `erpnext-cdc-connector` and task `0` in `RUNNING` state.
+- Debezium accepted the live MariaDB `11.8.9` server, completed an empty initial snapshot of Employee and Attendance, and entered GTID-based binlog streaming.
+- Created and updated Employee `HR-EMP-00001` and Attendance `HR-ATT-2026-00001` through the Frappe ORM. Kafka recorded the expected flattened create/update values in both table topics.
+- Deleted Attendance followed by Employee through the Frappe ORM. Each topic contains a rewritten row with `__deleted: "true"` followed by a null tombstone; both temporary database rows are gone.
+- Restarted Kafka Connect and Kafka independently. The connector/task returned to `RUNNING`, Kafka UI remained healthy, and topic end offsets remained Employee `6` and Attendance `4`, demonstrating offset/topic persistence without a repeat snapshot.
 
 ### Live HRMS Recovery
 
@@ -61,19 +73,15 @@ The original documentation checks above were static only. The HRMS recovery chec
 
 ## In Progress
 
-- Identifying the remaining CDC configuration and delivery-semantics gaps that must be resolved by small, testable implementation units.
+- Repairing the Node.js consumer executable contract and resolving its downstream blockchain delivery semantics.
 
 ## Next Up
 
 1. **Repair the executable contract**: Point `package.json` scripts and `main` to files that exist, or add the intentionally missing CLI/test structure. Ensure commands load the same environment file.
-2. **Choose one database network path**: Either safely publish MariaDB for host/`host.docker.internal` access or attach Kafka Connect and MariaDB to a shared network. Document and test the selected path.
-3. **Normalize local configuration**: Add a redacted `.env.example`, reconcile the blockchain API port, remove environment-specific generated connector state from the reusable template, and document startup order.
-4. **Run the infrastructure**: Start both stacks, confirm service health, discover the ERPNext database, deploy the connector, and verify connector/task `RUNNING` status.
-5. **Prove CDC behavior**: Capture representative snapshot, create, update, delete, and tombstone values for Employee and Attendance and convert them into fixtures.
-6. **Confirm the blockchain API contract**: Resolve timestamp type/unit, route behavior, authentication/key custody, response schema, not-found semantics, and idempotent update behavior with the external service owner.
-7. **Make delivery recoverable**: Tie offset progression to successful destination handling, add classified retries/backoff and a durable failure path, and test restart/rebalance/outage behavior.
-8. **Measure the full pipeline**: Run repeatable latency and throughput tests only after correctness and recovery behavior are established.
-9. **Add other destinations only after the blockchain path is stable**: Define a normalized event and sink interface, then implement and contract-test each new database/service adapter separately.
+2. **Confirm the blockchain API contract**: Resolve timestamp type/unit, route behavior, authentication/key custody, response schema, not-found semantics, and idempotent update behavior with the external service owner.
+3. **Make delivery recoverable**: Tie offset progression to successful destination handling, add classified retries/backoff and a durable failure path, and test restart/rebalance/outage behavior.
+4. **Measure the full pipeline**: Run repeatable latency and throughput tests only after correctness and recovery behavior is established.
+5. **Add other destinations only after the blockchain path is stable**: Define a normalized event and sink interface, then implement and contract-test each new database/service adapter separately.
 
 ## Known Gaps and Open Questions
 
@@ -87,9 +95,7 @@ The original documentation checks above were static only. The HRMS recovery chec
 
 ### Connectivity and Configuration
 
-- The ERPNext and Kafka/Debezium stacks use separate Docker networks.
-- MariaDB port `3306` is not published by the current ERPNext Compose file, while the generated connector expects `host.docker.internal:3306` when `DB_HOST` is local. The intended connection path is therefore unresolved.
-- The checked-in connector JSON embeds a generated ERPNext database name and development database password. It is environment-specific and is also overwritten by the deployment utility.
+- Debezium 3.6 officially lists MariaDB 11.4 and 11.7 in its tested matrix; snapshot and GTID streaming against this environment's MariaDB 11.8.9 succeeded, but that local result does not expand upstream's formal compatibility claim.
 - The consumer and performance monitor default `API_ENDPOINT` to port `4000`; the blockchain integration utility defaults to `4001` and loads a different environment path.
 - The external blockchain API and chain are not present in this repository, so their availability and contract cannot be established locally from source.
 
@@ -109,8 +115,7 @@ The original documentation checks above were static only. The HRMS recovery chec
 - Development database credentials are hard-coded in Compose and connector defaults.
 - The current API payload includes the raw blockchain private key. Production key custody and authenticated encrypted transport are undecided.
 - Kafka, Kafka Connect, and local database access have no documented authentication or TLS configuration.
-- Kafka/ZooKeeper persistence, retention, backups, monitoring, PII handling, and recovery procedures are not defined.
-- Kafka UI uses the floating `latest` image tag.
+- Kafka retention, backups, monitoring, PII handling, and recovery procedures beyond ordinary named-volume restarts are not defined.
 
 ## Architecture Decisions
 
@@ -122,8 +127,12 @@ The original documentation checks above were static only. The HRMS recovery chec
 - **AD-06 — Delivery is at-least-once in intent, not yet guaranteed safely**: Replays must be tolerated, but current batching, offset, and retry behavior requires correction and tests before a formal guarantee.
 - **AD-07 — Local defaults are not production policy**: Root credentials, plaintext local listeners, and raw private-key payloads are development artifacts that require hardening.
 - **AD-08 — Context7 before dependency decisions**: Library, framework, API, CLI, Docker image, and service decisions use current documentation through the resolve-then-query workflow before implementation.
+- **AD-09 — Direct private database network**: Kafka Connect joins the ERPNext network and uses `db:3306`; MariaDB is not published to the host.
+- **AD-10 — Current local CDC runtime**: The local stack uses Kafka KRaft `4.3.1`, Debezium `3.6.2.Final`, the MariaDB connector, and Kafbat UI `v1.5.0`, all pinned rather than floating.
 
 ## Session Notes
+
+- **2026-09-16 — ERPNext CDC stack operational**: Replaced ZooKeeper-era Kafka, Debezium 2.4, and the floating Provectus UI with pinned Kafka 4.3.1 KRaft, Debezium 3.6.2.Final, and Kafbat UI v1.5.0. Added persistent Kafka storage, private shared-network MariaDB access, a dedicated CDC-user/bootstrap workflow, and current MariaDB/delete-transform configuration. Proved Frappe ORM create/update/delete events and tombstones for Employee and Attendance, removed the fixtures, and verified Kafka/Connect restart recovery without new events or a repeated snapshot.
 
 - **2026-09-16 — HRMS workspace visibility repaired**: Reproduced the reported Payroll-only view using Frappe's boot-navigation path as the active system user. The prior `develop` installation had left all nine `Workspace Sidebar.module` values stamped with workspace titles and with timestamps newer than the pinned release files, so ordinary migration retained them; only `Payroll` matched a real allowed module. Created the `20260916_113605` site/files backup, force-imported the standard HRMS `v16.7.1` workspace sidebar documents, cleared caches, and verified the same user now receives Expenses, HR Setup, Leaves, Payroll, Performance, Recruitment, Shift & Attendance, Tax & Benefits, and Tenure.
 
